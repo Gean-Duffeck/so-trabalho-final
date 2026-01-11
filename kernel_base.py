@@ -166,6 +166,13 @@ class Kernel:
         self.fila_de_bloqueados = {}
         self.quantum_restante = QUANTUM_RR
         self.proximo_pid = 1 # PID 0 pode ser reservado para o 'init' ou 'idle'
+       
+        # --- NOVO: Estrutura para Gerenciamento de Memória (Equipe 6) ---
+        # Inicializa toda a RAM como um único bloco livre
+        # Formato: [(endereco_base, tamanho_bloco)]
+        self.memoria_livre_blocos = [(0, TAMANHO_RAM_BYTES)]
+        self.rodando = False
+        print("[Kernel] Núcleo do SO inicializado.")
 
         # Módulos do SO (serão as funções implementadas pelas equipes)
         self.rodando = False
@@ -313,7 +320,8 @@ class Kernel:
         print(f"[Kernel] (Equipe 3) AINDA NÃO IMPLEMENTADO: Receber mensagem para {pid}.")
         pass
 
-        # --- Equipe 4: Criação e Encerramento de Threads ---
+
+    # --- Equipe 4: Criação e Encerramento de Threads ---
     def sys_create_thread(self, pid, funcao_inicio):
         """
         Cria uma nova thread dentro de um processo existente.
@@ -321,11 +329,6 @@ class Kernel:
         - Criar e inicializar um TCB.
         - Adicionar o TCB à lista de threads do PCB e à fila de prontos do escalonador.
         """
-        # 
-        # A EQUIPE 4 DEVE IMPLEMENTAR ESTA FUNÇÃO
-        # 
-        print(f"[Kernel] (Equipe 4) AINDA NÃO IMPLEMENTADO: Criar thread para o processo {pid}.")
-        pass
         if pid not in self.tabela_de_processos:
             print(f"[Kernel] Erro: Processo {pid} nao encontrado")
             return -1
@@ -351,13 +354,6 @@ class Kernel:
         - Se sim, deve escolher o próximo da fila de prontos.
         - Retorna o PCB do próximo processo a ser executado.
         """
-        # 
-        # A EQUIPE 5 DEVE IMPLEMENTAR ESTA FUNÇÃO
-        # 
-        
-       # Equipe5: Escalonaor Round Robin
-def schedule_rr(self, processo_saindo, colocar_de_volta_na_fila):
-
         tempo_acabou = self.quantum_restante <= 0
         processo_parou = (processo_saindo and processo_saindo.estado != EstadoProcesso.EXECUCAO)
         cpu_ociosa = (processo_saindo is None)
@@ -387,30 +383,99 @@ def schedule_rr(self, processo_saindo, colocar_de_volta_na_fila):
     # --- Equipe 6: Alocação e Liberação de Memória Física ---
     def sys_malloc(self, tamanho):
         """
-        Aloca um bloco de memória contígua na RAM.
-        - Deve implementar um algoritmo como First-Fit ou Best-Fit.
+        Aloca um bloco de memória contígua na RAM usando First-Fit.
         - Gerenciar uma lista/mapa de blocos livres.
         - Retorna o endereço base do bloco alocado ou -1 se não houver espaço.
         """
         # 
         # A EQUIPE 6 DEVE IMPLEMENTAR ESTA FUNÇÃO
         # 
-        print(f"[Kernel] (Equipe 6) AINDA NÃO IMPLEMENTADO: Alocar {tamanho} bytes.")
+        if tamanho <= 0:
+            print("[Kernel] (Equipe 6) Erro: Tentativa de alocar tamanho não positivo.")
+            return -1
+
+        # 1. Procurar o primeiro bloco livre que caiba
+        for i, (endereco_base, tamanho_bloco) in enumerate(self.memoria_livre_blocos):
+
+            if tamanho_bloco >= tamanho:
+                # Bloco encontrado (First-Fit).
+
+                # 2. Remover o bloco completo da lista de livres
+                del self.memoria_livre_blocos[i]
+
+                sobra = tamanho_bloco - tamanho
+
+                if sobra > 0:
+                    # 3. Há sobra: Criar um novo bloco livre com a sobra
+                    novo_endereco_livre = endereco_base + tamanho
+                    novo_bloco_livre = (novo_endereco_livre, sobra)
+
+                    # Adicionar a sobra de volta à lista de livres
+                    self.memoria_livre_blocos.append(novo_bloco_livre)
+                    
+                    # Ordenar a lista para facilitar o sys_free (Coalescing)
+                    self.memoria_livre_blocos.sort(key=lambda x: x[0])
+
+                print(f"[Kernel] (Equipe 6) SUCESSO: Alocado endereço base {endereco_base} para {tamanho} bytes (Sobra: {sobra} bytes).")
+                return endereco_base
+        
+        # 4. Falha na alocação
+        print(f"[Kernel] (Equipe 6) FALHA: Não há bloco contíguo de {tamanho} bytes disponível.")
         return -1 # Retorna -1 para indicar falha
     
-    def sys_free(self, endereco):
+    def sys_free(self, endereco, tamanho):
         """
         Libera um bloco de memória.
-        - Deve marcar o bloco como livre e tentar fundi-lo com vizinhos livres.
+        - Deve marcar o bloco como livre e tentar fundi-lo com vizinhos livres (Coalescing).
         """
         # 
         # A EQUIPE 6 DEVE IMPLEMENTAR ESTA FUNÇÃO
         # 
-        print(f"[Kernel] (Equipe 6) AINDA NÃO IMPLEMENTADO: Liberar memória no endereço {endereco}.")
-        pass
-    
+        print(f"[Kernel] (Equipe 6) Liberando memória no endereço {endereco} com tamanho {tamanho}...")
+
+        if tamanho <= 0 or endereco == -1: 
+           print("[Kernel] (Equipe 6) Aviso: Tentativa de liberar bloco inválido.")
+           return
+          
+        # 1. Adiciona o bloco recém-liberado à lista
+        self.memoria_livre_blocos.append((endereco, tamanho))
+      
+        # 2. Ordena a lista de blocos livres pelo endereço base para facilitar a fusão
+        self.memoria_livre_blocos.sort(key=lambda x: x[0])
+      
+        # 3. Tenta fundir blocos vizinhos (Coalescing)
+        nova_lista_livre = []
+        if self.memoria_livre_blocos:
+            # Converte a primeira tupla para lista para permitir a alteração do tamanho
+            bloco_atual = list(self.memoria_livre_blocos[0])
+          
+            for i in range(1, len(self.memoria_livre_blocos)):
+                proximo_endereco, proximo_tamanho = self.memoria_livre_blocos[i]
+              
+                # Verifica se o fim do bloco atual é contíguo ao início do próximo bloco
+                if bloco_atual[0] + bloco_atual[1] == proximo_endereco:
+                    # Fusão: Aumenta o tamanho do bloco atual
+                    bloco_atual[1] += proximo_tamanho
+                else:
+                    # Não são contíguos: Salva o bloco atual fundido e começa a analisar o próximo
+                    nova_lista_livre.append(tuple(bloco_atual))
+                    bloco_atual = list(self.memoria_livre_blocos[i])
+          
+            # Adiciona o último bloco processado
+            nova_lista_livre.append(tuple(bloco_atual))
+          
+        self.memoria_livre_blocos = nova_lista_livre
+        print(f"[Kernel] (Equipe 6) Memória liberada e blocos livres fundidos. Blocos restantes: {len(self.memoria_livre_blocos)}.")
+
+
     # --- Equipe 7: Gerenciamento de Memória Virtual ---
     def vm_translate_address(self, pid, endereco_logico):
+        """
+        Traduz um endereço lógico de um processo para um endereço físico na RAM.
+        - Deve usar a tabela de páginas do processo.
+        - Simular um Page Fault se a página não estiver na memória.
+        - Retorna o endereço físico correspondente.
+        """
         # Define o tamanho da pagina
         tamanho_pagina = TAMANHO_BLOCO_DISCO_BYTES
 
@@ -530,10 +595,14 @@ def schedule_rr(self, processo_saindo, colocar_de_volta_na_fila):
         print(f"[Kernel] (Equipe 8) Arquivo '{nome}' excluído. {blocos_liberados} blocos liberados.")
         return True
 
+
     # --- Equipe 9: Interpretador de Comandos ---
     def shell_parse_and_execute(self, comando_str):
         """
         Interpreta um comando do usuário e chama a função de sistema correspondente.
+        - Deve fazer o parsing da string de comando.
+        - Chamar a função sys_* apropriada deste Kernel.
+        - Retorna o resultado da operação para o usuário.
         """
         if not comando_str or comando_str.strip() == "":
             return ""
@@ -603,11 +672,17 @@ def schedule_rr(self, processo_saindo, colocar_de_volta_na_fila):
         except ValueError:
             return "Erro: Argumento inválido (esperava-se um número)."
         except Exception as e:
-            return f"Erro inesperado no shell: {e}
-        # --- Equipe 10: Listagem de Processos (htop) ---
+            return f"Erro inesperado no shell: {e}"
+
+
+    # --- Equipe 10: Listagem de Processos (htop) ---
     def sys_htop(self):
         """
         Gera uma string formatada com a lista de todos os processos e seus estados.
+        - Deve varrer a tabela de processos.
+        - Para cada processo, coletar PID, nome, estado, etc.
+        - Formatar tudo em uma única string legível, como uma tabela.
+        - Retorna a string. Não deve usar print().
         """
         print("[Kernel] (Equipe 10) Gerando listagem de processos.")
 
@@ -672,4 +747,3 @@ if __name__ == "__main__":
         print("\n[Kernel] Forçando parada...")
     
     thread_shell.join()
-
